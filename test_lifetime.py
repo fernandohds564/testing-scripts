@@ -5,7 +5,7 @@ import pyaccel
 from pymodels import si
 import mathphys
 
-# This code works with mathphys at v1.1.0 and pyaccel at 55feac4
+# This code works with mathphys at v1.1.0 and pyaccel at 90d6e7c
 
 # %%
 ring = si.create_accelerator()
