@@ -133,3 +133,6 @@ dmypy.json
 
 # zip files
 *.zip
+
+# to be removed soon
+sweep.sh
