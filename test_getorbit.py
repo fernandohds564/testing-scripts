@@ -142,7 +142,7 @@ def run_multiprocess_asynchronous_get():
             f'std {out.std()*1000:.0f} ms    '
             f'p2p {(out.max()-out.min())*1000:.0f} ms    ')
         outt.append(out)
-        time.sleep(1/30)
+        time.sleep(1/50)
 
     np.savetxt('si_bpms.txt', outt)
 
@@ -162,9 +162,10 @@ def run_multiprocess_asynchronous_get_analysis():
     si2plt = si - si.mean(axis=1)[:, None]
     si2plt_std = si2plt.std(axis=1)
     si2plt_p2p = si2plt.max(axis=1) - si2plt.min(axis=1)
-    si2plt_bpm = si2plt.std(axis=0)
-    si2plt_bpm_max = si2plt.max(axis=0)
-    si2plt_bpm_min = si2plt.min(axis=0)
+    si2plt2 = np.diff(si, axis=1)
+    si2plt_bpm = si2plt2.std(axis=0)
+    si2plt_bpm_max = si2plt2.max(axis=0)
+    si2plt_bpm_min = si2plt2.min(axis=0)
 
     fig = plt.figure(figsize=(15, 15))
     gs = mgrid.GridSpec(4, 1, figure=fig)
@@ -350,7 +351,7 @@ def run_test_sofb():
     total = 30
     time.sleep(total)
 
-    times = values
+    # times = values
     print(f'frequency:    {len(times)/total:.2f} Hz')
     print(f'average time: {np.mean(np.diff(times))*1000:.2f} ms')
     print(f'std time:     {np.std(np.diff(times))*1000:.2f} ms')
@@ -360,11 +361,60 @@ def run_test_sofb():
     pv.clear_callbacks()
 
 
+# #########################################################
+# ############## Analysis of Test SOFB Orbit ##############
+# #########################################################
 def run_test_sofb_analysis():
     """Run analysis of SOFB IOC Test."""
     times = np.loadtxt('si_sofb.txt') * 1000
     dtimes = np.diff(times)
-    dtimes = times
+    # dtimes = times
+    dt_avg = dtimes.mean()
+    dt_std = dtimes.std()
+    dt_min = dtimes.min()
+    dt_max = dtimes.max()
+    dt_p2p = dt_max - dt_min
+
+    fig = plt.figure(figsize=(10, 10))
+    gs = mgrid.GridSpec(3, 1, figure=fig)
+    gs.update(left=0.12, right=0.98, top=0.97, bottom=0.08, hspace=0.45)
+    ax = plt.subplot(gs[0, 0])
+    ay = plt.subplot(gs[1, 0])
+    az = plt.subplot(gs[2, 0])
+
+    ax.plot(dtimes, 'o-')
+    ax.set_xlabel('aquisition number')
+    ax.set_ylabel('dtime [ms]')
+
+    vals = [dt_std, dt_min, dt_avg, dt_p2p, dt_max]
+    x = np.arange(len(vals))
+    ay.bar(x, vals)
+    ay.set_xticklabels(('', 'STD', 'MIN', 'AVG', 'P2P', 'MAX'))
+    # ay.set_xlabel('Stats')
+    ay.set_ylabel('dtime [ms]')
+
+    az.hist(dtimes, bins=100)
+    az.set_xlabel('dtime [ms]')
+    az.set_ylabel('number of occurencies')
+
+    plt.show()
+
+
+# #########################################################
+# ############### Analysis CAMonitor of BPM ###############
+# #########################################################
+def run_camonitor_bpm_analysis():
+    """Run analysis of camonitor of BPM."""
+    with open('bpm01m2.txt', 'r') as fil:
+        data = fil.readlines()
+
+    tstamp = []
+    for line in data:
+        tim = line.split()[2]
+        tim = datetime.datetime.strptime(tim, '%H:%M:%S.%f')
+        tstamp.append(tim.timestamp())
+
+    dtimes = np.diff(tstamp) * 1000
     dt_avg = dtimes.mean()
     dt_std = dtimes.std()
     dt_min = dtimes.min()
@@ -403,10 +453,12 @@ if __name__ == '__main__':
 
     # run_multiprocess_synchronous_get_optimized()
 
-    # run_multiprocess_asynchronous_get()
-    # run_multiprocess_asynchronous_get_analysis()
+    run_multiprocess_asynchronous_get()
+    run_multiprocess_asynchronous_get_analysis()
 
     # run_test_epicsorbit_class()
 
     # run_test_sofb()
-    run_test_sofb_analysis()
+    # run_test_sofb_analysis()
+
+    # run_camonitor_bpm_analysis()
