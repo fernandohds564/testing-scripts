@@ -3,9 +3,11 @@
 import time
 import datetime
 from multiprocessing import Pipe
+import pickle
 
 import psutil
 import numpy as np
+from scipy.optimize import curve_fit
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as mcmap
@@ -13,28 +15,40 @@ import matplotlib.gridspec as mgrid
 from matplotlib import rcParams
 
 from epics import ca, PV, CAProcess
+from siriuspy.namesys import SiriusPVName
 from siriuspy.sofb.csdev import SOFBFactory
 from siriuspy.sofb.orbit import EpicsOrbit
 
-rcParams.update({'font.size': 16, 'lines.linewidth': 2, 'axes.grid': True})
+rcParams.update({
+    'font.size': 16, 'lines.linewidth': 2, 'axes.grid': True,
+    'text.usetex':True})
+
+
+def save_pickle(fname, data):
+    """."""
+    if not fname.endswith('.pickle'):
+        fname += '.pickle'
+    with open(fname, 'wb') as fil:
+        pickle.dump(data, fil)
+
+
+def load_pickle(fname):
+    """."""
+    if not fname.endswith('.pickle'):
+        fname += '.pickle'
+    with open(fname, 'rb') as fil:
+        data = pickle.load(fil)
+    return data
 
 
 # #########################################################
 # ############## synchronous get optimized ################
 # #########################################################
-def run_synchronous_get_optimized():
+def run_synchronous_get_optimized(pvs):
     """Run synchronous optimized get test."""
-    sofb = SOFBFactory.create('SI')
-
-    pvs = []
-    for bpm in sofb.bpm_names:
-        pvs.append(bpm+':PosX-Mon')
-    for bpm in sofb.bpm_names:
-        pvs.append(bpm+':PosY-Mon')
-
     pvschid = []
-    for pv in pvs:
-        chid = ca.create_channel(pv, connect=False, auto_cb=False)
+    for pvn in pvs:
+        chid = ca.create_channel(pvn, connect=False, auto_cb=False)
         pvschid.append(chid)
 
     for chid in pvschid:
@@ -52,36 +66,9 @@ def run_synchronous_get_optimized():
 
 
 # #########################################################
-# ############ asynchronous get (monitoring) ##############
-# #########################################################
-def run_asynchronous_get():
-    """Run asynchronous get test."""
-    sofb = SOFBFactory.create('SI')
-
-    pvs = []
-    for bpm in sofb.bpm_names:
-        pvs.append(bpm+':PosX-Mon')
-        pvs.append(bpm+':PosY-Mon')
-
-    for pv in pvs:
-        pvs.append(PV(pv))
-
-    for pv in pvs:
-        pv.wait_for_connection()
-
-    for _ in range(600):
-        t0 = time.time()
-        out = []
-        for pv in pvs:
-            out.append(pv.value)
-        time.sleep(0.03)
-        print(f'dtime {(time.time()-t0)*1000:.1f}ms   pos {out[0]:.0f}nm')
-
-
-# #########################################################
 # ###### multiprocess asynchronous get (monitoring) #######
 # #########################################################
-def run_multiprocess_asynchronous_get():
+def run_multiprocess_asynchronous_get(pvs):
     """Run asynchronous get with multiprocessing test."""
     def run_subprocess(pvs, pipe):
         pvsobj = []
@@ -96,14 +83,6 @@ def run_multiprocess_asynchronous_get():
             for pv in pvsobj:
                 out.append(pv.timestamp)
             pipe.send(out)
-
-    sofb = SOFBFactory.create('SI')
-    bpm_names = list(sofb.bpm_names)
-
-    pvs = []
-    for bpm in bpm_names:
-        pvs.append(bpm+':PosX-Mon')
-        pvs.append(bpm+':PosY-Mon')
 
     # create processes
     nrproc = 4
@@ -204,9 +183,128 @@ def run_multiprocess_asynchronous_get_analysis():
 
 
 # #########################################################
+# #### multiprocess asynchronous monitor (monitoring) #####
+# #########################################################
+def run_multiprocess_asynchronous_monitor(pvs, total_time=1):
+    """Run asynchronous get with multiprocessing test."""
+    def run_subprocess(pvsi, pipe):
+        def update_pv(pvname, value, **kwargs):
+            nonlocal pvsinfo
+            pvsinfo[pvname].append(kwargs['timestamp'])
+            # pvsinfo[pvname].append(time.time())
+        pvsobj = []
+        pvsinfo = dict()
+        for pvn in pvsi:
+            pvsobj.append(PV(pvn))
+            pvsinfo[pvn] = []
+
+        for pvo in pvsobj:
+            pvo.wait_for_connection()
+
+        pipe.send(True)
+        for pvo in pvsobj:
+            pvo.add_callback(update_pv)
+        pipe.recv()
+        for pvo in pvsobj:
+            pvo.clear_callbacks()
+        pipe.send(pvsinfo)
+
+    # create processes
+    nrproc = min(4, len(pvs))
+
+    # subdivide the pv list for the processes
+    div = len(pvs) // nrproc
+    rem = len(pvs) % nrproc
+    sub = [div*i + min(i, rem) for i in range(nrproc+1)]
+
+    procs = []
+    my_pipes = []
+    for i in range(nrproc):
+        mine, theirs = Pipe()
+        my_pipes.append(mine)
+        pvsn = pvs[sub[i]:sub[i+1]]
+        procs.append(CAProcess(
+            target=run_subprocess,
+            args=(pvsn, theirs),
+            daemon=True))
+
+    for proc in procs:
+        proc.start()
+
+    for pipe in my_pipes:
+        pipe.recv()
+
+    time.sleep(total_time)
+
+    for pipe in my_pipes:
+        pipe.send(False)
+    pvsinfot = dict()
+    for pipe in my_pipes:
+        pvsinfot.update(pipe.recv())
+
+    for proc in procs:
+        proc.join()
+
+    save_pickle('si_monitor_bpms', pvsinfot)
+
+
+# #########################################################
+# ####################### Analysis ########################
+# #########################################################
+def run_multiprocess_asynchronous_monitor_analysis():
+    """Run analysis for asynchronous get with multiprocessing test."""
+    pvsinfo = load_pickle('si_monitor_bpms')
+
+    if len(pvsinfo) == 0:
+        raise ValueError('No data loaded.')
+    elif len(pvsinfo) == 1:
+        run_camonitor_bpm_analysis(pvsinfo.popitem()[1])
+        return
+
+    fig = plt.figure(figsize=(8, 8))
+    gs = mgrid.GridSpec(2, 1, figure=fig)
+    gs.update(left=0.10, right=0.98, top=0.97, bottom=0.12, hspace=0.25)
+    ax = plt.subplot(gs[0, 0])
+    ay = plt.subplot(gs[1, 0], sharex=ax)
+    # aw = plt.subplot(gs[2, 0], sharex=ax)
+
+    tims = []
+    for tim in pvsinfo.values():
+        tims.extend(tim)
+    tims = np.sort(tims) * 1000
+    reftime = tims[0]
+    tims -= reftime
+    # cumtims = np.arange(tims.size)
+
+    # ax.plot(tims, cumtims)
+    # ax.set_xlabel('timestamp [ms]')
+    # ax.set_ylabel(' cumulative # of evts')
+    # ax.set_xlim([360, 500])
+
+    bins = int(tims[-1]/5)
+    ax.hist(tims, bins=bins)
+    ax.set_xlabel('timestamp [ms]')
+    ax.set_ylabel('number of evts')
+
+    pvs = sorted(pvsinfo)
+    colors = mcmap.jet(np.linspace(0, 1, len(pvs)))
+    for i, (cor, pvn) in enumerate(zip(colors, pvs)):
+        val = np.array(pvsinfo[pvn])*1000 - reftime
+        ay.errorbar(
+            val, i + 0*val, yerr=0.5, marker='o', linestyle='', color=cor)
+    for i in range(int(tims[-1]*30/1000)+2):
+        ay.axvline(x=(i-0.5)*1/30*1000, linewidth=1, color='k', linestyle='--')
+    ay.set_xlabel('timestamp [ms]')
+    ay.set_ylabel('BPM Index')
+    ay.grid(False)
+
+    plt.show()
+
+
+# #########################################################
 # ######## multiprocess synchronous get optimized #########
 # #########################################################
-def run_multiprocess_synchronous_get_optimized():
+def run_multiprocess_synchronous_get_optimized(pvs):
     """Run synchronous get optimized with multiprocessing test."""
     def run_subprocess(pvs, pipe):
         pvschid = []
@@ -231,14 +329,6 @@ def run_multiprocess_synchronous_get_optimized():
             pipe.send(out)
 
     proc = psutil.Process()
-
-    sofb = SOFBFactory.create('SI')
-    bpm_names = list(sofb.bpm_names[7:15])
-
-    pvs = []
-    for bpm in bpm_names:
-        pvs.append(bpm+':PosX-Mon')
-        pvs.append(bpm+':PosY-Mon')
 
     # create processes
     nrproc = 2
@@ -403,16 +493,29 @@ def run_test_sofb_analysis():
 # #########################################################
 # ############### Analysis CAMonitor of BPM ###############
 # #########################################################
-def run_camonitor_bpm_analysis():
+def run_camonitor_bpm_analysis(tstamp=None):
     """Run analysis of camonitor of BPM."""
-    with open('bpm01m2.txt', 'r') as fil:
-        data = fil.readlines()
+    def fit_gauss(binc, den, A, x0, sig):
+        def gauss(x, *p):
+            A, mu, sigma = p
+            return A*np.exp(-(x-mu)**2/(2.*sigma*sigma))
 
-    tstamp = []
-    for line in data:
-        tim = line.split()[2]
-        tim = datetime.datetime.strptime(tim, '%H:%M:%S.%f')
-        tstamp.append(tim.timestamp())
+        coeff, var_matrix = curve_fit(
+            gauss, binc, den, p0=[A, x0, sig])
+
+        # Get the fitted curve
+        return gauss(binc, *coeff), coeff
+
+    if tstamp is None:
+        with open('bpm01m2.txt', 'r') as fil:
+            data = fil.readlines()
+
+        tstamp = []
+        for line in data:
+            tim = line.split()[2]
+            tim = datetime.datetime.strptime(tim, '%H:%M:%S.%f')
+            tstamp.append(tim.timestamp())
+        tstamp = np.array(tstamp)
 
     dtimes = np.diff(tstamp) * 1000
     dt_avg = dtimes.mean()
@@ -439,26 +542,83 @@ def run_camonitor_bpm_analysis():
     # ay.set_xlabel('Stats')
     ay.set_ylabel('dtime [ms]')
 
-    az.hist(dtimes, bins=100)
+    dens, bins, _ = az.hist(dtimes, bins=100)
     az.set_xlabel('dtime [ms]')
     az.set_ylabel('number of occurencies')
 
+    bins += (bins[1]-bins[0])/2
+    bins = bins[:-1]
+    lower = (bins > 25) & (bins < 34.5)
+    dens1 = dens[lower]
+    bins1 = bins[lower]
+    fitb1, coeff1 = fit_gauss(
+        bins1, dens1, dens1.max(), bins1.mean(), dens1.std())
+    az.plot(bins1, fitb1, 'tab:orange')
+    txt = r'$\mu$ = '+f'{coeff1[1]:.1f} ms\n'
+    txt += r'$\sigma$ = '+f'{coeff1[2]:.1f} ms'
+    az.annotate(
+        txt, xy=(coeff1[1], coeff1[0]),
+        xytext=(coeff1[1] - 3*coeff1[2], coeff1[0]*0.6),
+        horizontalalignment='right',
+        arrowprops=dict(facecolor='black', shrink=0.05))
+
+    upper = bins > 34.5
+    dens2 = dens[upper]
+    bins2 = bins[upper]
+    if dens2.max() > 4:
+        fitb2, coeff2 = fit_gauss(
+            bins2, dens2, dens2.max(), bins2.mean(), dens2.std())
+        az.plot(bins2, fitb2, 'tab:orange')
+        txt = r'$\mu$ = '+f'{coeff2[1]:.1f} ms\n'
+        txt += r'$\sigma$ = '+f'{coeff2[2]:.1f} ms'
+        az.annotate(
+            txt, xy=(coeff2[1], coeff2[0]),
+            xytext=(coeff2[1] + 3*coeff2[2], coeff2[0]),
+            arrowprops=dict(facecolor='black', shrink=0.05))
     plt.show()
 
 
 if __name__ == '__main__':
-    # run_synchronous_get_optimized()
+    # ##### Create the list of PVs to connect #####
+    # sofb = SOFBFactory.create('SI')
+    # bpms = []
+    # bpms.extend(sofb.bpm_names)
+    # # bpms[:1]
 
-    # run_asynchronous_get()
+    bpms = []
+    sofb = SOFBFactory.create('TS')
+    bpms.extend(sofb.bpm_names)
+    sofb = SOFBFactory.create('TB')
+    bpms.extend(sofb.bpm_names)
+    # bpms = bpms[:1]
 
-    # run_multiprocess_synchronous_get_optimized()
+    pvsraw = []
+    for bpm in bpms:
+        pvsraw.append(bpm+':PosX-Mon')
 
-    run_multiprocess_asynchronous_get()
-    run_multiprocess_asynchronous_get_analysis()
+    secs = ()
+    if secs:
+        pvs = []
+        for pvn in pvsraw:
+            pvn = SiriusPVName(pvn)
+            if pvn.sub.startswith(secs):
+                pvs.append(pvn)
+    else:
+        pvs = pvsraw
+
+    # ##### Select a test to run #####
+
+    # run_synchronous_get_optimized(pvs)
+
+    # run_multiprocess_synchronous_get_optimized(pvs)
+
+    # run_multiprocess_asynchronous_get(pvs)
+    # run_multiprocess_asynchronous_get_analysis()
+
+    run_multiprocess_asynchronous_monitor(pvs, total_time=1)
+    run_multiprocess_asynchronous_monitor_analysis()
 
     # run_test_epicsorbit_class()
 
     # run_test_sofb()
     # run_test_sofb_analysis()
-
-    # run_camonitor_bpm_analysis()
