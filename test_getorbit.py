@@ -10,6 +10,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import matplotlib.cm as mcmap
 import matplotlib.gridspec as mgrid
 from matplotlib import rcParams
@@ -39,6 +40,17 @@ def load_pickle(fname):
     with open(fname, 'rb') as fil:
         data = pickle.load(fil)
     return data
+
+
+class MyFormatter(mticker.Formatter):
+    """."""
+
+    def __init__(self, pvs):
+        self.pvs_short = [f'{pv.sub}:{pv.propty_name}' for pv in pvs]
+
+    def __call__(self, x, pos=None):
+        x = max(0, min(len(self.pvs_short)-1, int(x)))
+        return self.pvs_short[x]
 
 
 # #########################################################
@@ -146,7 +158,7 @@ def run_multiprocess_asynchronous_get_analysis():
     si2plt_bpm_max = si2plt2.max(axis=0)
     si2plt_bpm_min = si2plt2.min(axis=0)
 
-    fig = plt.figure(figsize=(15, 15))
+    fig = plt.figure(figsize=(10, 10))
     gs = mgrid.GridSpec(4, 1, figure=fig)
     gs.update(left=0.12, right=0.98, top=0.97, bottom=0.08, hspace=0.25)
     ax = plt.subplot(gs[0, 0])
@@ -171,7 +183,7 @@ def run_multiprocess_asynchronous_get_analysis():
     az.plot(si2plt_bpm_max, 'o-', label='MAX')
     az.plot(si2plt_bpm_min, 'o-', label='MIN')
     az.plot(si2plt_bpm_max - si2plt_bpm_min, 'o-', label='P2P')
-    az.set_xlabel('BPM')
+    az.set_xlabel('BPM Index')
     az.set_ylabel('std(timestamp) [ms]')
     az.legend(loc='best')
 
@@ -261,12 +273,18 @@ def run_multiprocess_asynchronous_monitor_analysis():
         run_camonitor_bpm_analysis(pvsinfo.popitem()[1])
         return
 
+    pvs = sorted([SiriusPVName(pv) for pv in pvsinfo])
+
     fig = plt.figure(figsize=(8, 8))
-    gs = mgrid.GridSpec(2, 1, figure=fig)
-    gs.update(left=0.10, right=0.98, top=0.97, bottom=0.12, hspace=0.25)
+    gs = mgrid.GridSpec(3, 1, figure=fig)
+    gs.update(left=0.12, right=0.98, top=0.97, bottom=0.08, hspace=0.3)
     ax = plt.subplot(gs[0, 0])
     ay = plt.subplot(gs[1, 0], sharex=ax)
-    # aw = plt.subplot(gs[2, 0], sharex=ax)
+    az = plt.subplot(gs[2, 0])
+    az.xaxis.set_major_formatter(MyFormatter(pvs))
+    az.tick_params(axis="x", labelsize=8, rotation=0)
+    ay.yaxis.set_major_formatter(MyFormatter(pvs))
+    ay.tick_params(axis="y", labelsize=8, rotation=45)
 
     tims = []
     for tim in pvsinfo.values():
@@ -277,16 +295,15 @@ def run_multiprocess_asynchronous_monitor_analysis():
     # cumtims = np.arange(tims.size)
 
     # ax.plot(tims, cumtims)
-    # ax.set_xlabel('timestamp [ms]')
+    # ax.set_xlabel('$t_\mathrm{stamp}$ [ms]')
     # ax.set_ylabel(' cumulative # of evts')
     # ax.set_xlim([360, 500])
 
     bins = int(tims[-1]/5)
     ax.hist(tims, bins=bins)
-    ax.set_xlabel('timestamp [ms]')
+    ax.set_xlabel('$t_\mathrm{stamp}$ [ms]')
     ax.set_ylabel('number of evts')
 
-    pvs = sorted(pvsinfo)
     colors = mcmap.jet(np.linspace(0, 1, len(pvs)))
     for i, (cor, pvn) in enumerate(zip(colors, pvs)):
         val = np.array(pvsinfo[pvn])*1000 - reftime
@@ -294,9 +311,26 @@ def run_multiprocess_asynchronous_monitor_analysis():
             val, i + 0*val, yerr=0.5, marker='o', linestyle='', color=cor)
     for i in range(int(tims[-1]*30/1000)+2):
         ay.axvline(x=(i-0.5)*1/30*1000, linewidth=1, color='k', linestyle='--')
-    ay.set_xlabel('timestamp [ms]')
-    ay.set_ylabel('BPM Index')
+    ay.set_xlabel('$t_\mathrm{stamp}$ [ms]')
+    ay.set_ylabel('BPM Name')
     ay.grid(False)
+
+    avg, std, mini, maxi = [], [], [], []
+    for i, (cor, pvn) in enumerate(zip(colors, pvs)):
+        val = np.array(pvsinfo[pvn])*1000 - reftime
+        dtime = np.diff(val)
+        avg.append(dtime.mean())
+        std.append(dtime.std())
+        mini.append(dtime.min())
+        maxi.append(dtime.max())
+    az.plot(avg, 'o-', label='AVG')
+    az.plot(std, 'o-', label='STD')
+    az.plot(maxi, 'o-', label='MAX')
+    az.plot(mini, 'o-', label='MIN')
+    az.plot(np.array(maxi) - np.array(mini), 'o-', label='P2P')
+    az.set_xlabel('BPM Name')
+    az.set_ylabel('Stats $\Delta t_\mathrm{stamp}$ [ms]')
+    az.legend(loc='best', fontsize='xx-small')
 
     plt.show()
 
@@ -407,8 +441,8 @@ def run_test_epicsorbit_class():
 
     time.sleep(5)
     print('Setting orbit acquisition rate')
-    orb.set_orbit_acq_rate(30)
     orb.set_orbit_mode(orb._csorb.SOFBMode.SlowOrb)
+    orb.set_orbit_acq_rate(40)
 
     t0 = time.time()
 
@@ -580,16 +614,16 @@ def run_camonitor_bpm_analysis(tstamp=None):
 
 if __name__ == '__main__':
     # ##### Create the list of PVs to connect #####
-    # sofb = SOFBFactory.create('SI')
-    # bpms = []
-    # bpms.extend(sofb.bpm_names)
+    sofb = SOFBFactory.create('SI')
+    bpms = []
+    bpms.extend(sofb.bpm_names)
     # # bpms[:1]
 
-    bpms = []
-    sofb = SOFBFactory.create('TS')
-    bpms.extend(sofb.bpm_names)
-    sofb = SOFBFactory.create('TB')
-    bpms.extend(sofb.bpm_names)
+    # bpms = []
+    # sofb = SOFBFactory.create('TS')
+    # bpms.extend(sofb.bpm_names)
+    # sofb = SOFBFactory.create('TB')
+    # bpms.extend(sofb.bpm_names)
     # bpms = bpms[:1]
 
     pvsraw = []
@@ -615,10 +649,10 @@ if __name__ == '__main__':
     # run_multiprocess_asynchronous_get(pvs)
     # run_multiprocess_asynchronous_get_analysis()
 
-    run_multiprocess_asynchronous_monitor(pvs, total_time=1)
-    run_multiprocess_asynchronous_monitor_analysis()
+    # run_multiprocess_asynchronous_monitor(pvs, total_time=1)
+    # run_multiprocess_asynchronous_monitor_analysis()
 
-    # run_test_epicsorbit_class()
+    run_test_epicsorbit_class()
 
     # run_test_sofb()
     # run_test_sofb_analysis()
