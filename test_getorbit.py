@@ -21,8 +21,8 @@ from siriuspy.sofb.csdev import SOFBFactory
 from siriuspy.sofb.orbit import EpicsOrbit
 
 rcParams.update({
-    'font.size': 16, 'lines.linewidth': 2, 'axes.grid': True,
-    'text.usetex':True})
+    'font.size': 20, 'lines.linewidth': 2, 'axes.grid': True,
+    'text.usetex': True})
 
 
 def save_pickle(fname, data):
@@ -204,6 +204,7 @@ def run_multiprocess_asynchronous_monitor(pvs, total_time=1):
             nonlocal pvsinfo
             pvsinfo[pvname].append(kwargs['timestamp'])
             # pvsinfo[pvname].append(time.time())
+            # pvsinfo[pvname].append(time.time()- kwargs['timestamp'])
         pvsobj = []
         pvsinfo = dict()
         for pvn in pvsi:
@@ -617,7 +618,7 @@ if __name__ == '__main__':
     sofb = SOFBFactory.create('SI')
     bpms = []
     bpms.extend(sofb.bpm_names)
-    # # bpms[:1]
+    # bpms = bpms[8:16]
 
     # bpms = []
     # sofb = SOFBFactory.create('TS')
@@ -649,10 +650,10 @@ if __name__ == '__main__':
     # run_multiprocess_asynchronous_get(pvs)
     # run_multiprocess_asynchronous_get_analysis()
 
-    # run_multiprocess_asynchronous_monitor(pvs, total_time=1)
-    # run_multiprocess_asynchronous_monitor_analysis()
+    run_multiprocess_asynchronous_monitor(pvs, total_time=1)
+    run_multiprocess_asynchronous_monitor_analysis()
 
-    run_test_epicsorbit_class()
+    # run_test_epicsorbit_class()
 
     # run_test_sofb()
     # run_test_sofb_analysis()
