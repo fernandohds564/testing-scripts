@@ -21,8 +21,8 @@ from siriuspy.sofb.csdev import SOFBFactory
 from siriuspy.sofb.orbit import EpicsOrbit
 
 rcParams.update({
-    'font.size': 16, 'lines.linewidth': 2, 'axes.grid': True,
-    'text.usetex':True})
+    'font.size': 20, 'lines.linewidth': 2, 'axes.grid': True,
+    'text.usetex': True})
 
 
 def save_pickle(fname, data):
@@ -658,7 +658,7 @@ if __name__ == '__main__':
     sofb = SOFBFactory.create('SI')
     bpms = []
     bpms.extend(sofb.bpm_names)
-    # bpms[:1]
+    # bpms = bpms[8:16]
 
     # bpms = []
     # sofb = SOFBFactory.create('TB')
