@@ -46,7 +46,8 @@ class MyFormatter(mticker.Formatter):
     """."""
 
     def __init__(self, pvs):
-        self.pvs_short = [f'{pv.sub}:{pv.propty_name}' for pv in pvs]
+        self.pvs_short = [
+            f"{pv.sub}{('-'+pv.idx) if pv.idx else ''}" for pv in pvs]
 
     def __call__(self, x, pos=None):
         x = max(0, min(len(self.pvs_short)-1, int(x)))
@@ -204,6 +205,7 @@ def run_multiprocess_asynchronous_monitor(pvs, total_time=1):
             nonlocal pvsinfo
             pvsinfo[pvname].append(kwargs['timestamp'])
             # pvsinfo[pvname].append(time.time())
+            # pvsinfo[pvname].append(time.time()-kwargs['timestamp'])
         pvsobj = []
         pvsinfo = dict()
         for pvn in pvsi:
@@ -298,19 +300,21 @@ def run_multiprocess_asynchronous_monitor_analysis():
     # ax.set_xlabel('$t_\mathrm{stamp}$ [ms]')
     # ax.set_ylabel(' cumulative # of evts')
     # ax.set_xlim([360, 500])
-
     bins = int(tims[-1]/5)
     ax.hist(tims, bins=bins)
     ax.set_xlabel('$t_\mathrm{stamp}$ [ms]')
     ax.set_ylabel('number of evts')
 
+    freq = 25.16
     colors = mcmap.jet(np.linspace(0, 1, len(pvs)))
     for i, (cor, pvn) in enumerate(zip(colors, pvs)):
         val = np.array(pvsinfo[pvn])*1000 - reftime
         ay.errorbar(
             val, i + 0*val, yerr=0.5, marker='o', linestyle='', color=cor)
-    for i in range(int(tims[-1]*30/1000)+2):
-        ay.axvline(x=(i-0.5)*1/30*1000, linewidth=1, color='k', linestyle='--')
+    for i in range(int(tims[-1]*freq/1000)+2):
+        ay.axvline(
+            x=(i - 0.5)/freq*1000, linewidth=1,
+            color='k', linestyle='--')
     ay.set_xlabel('$t_\mathrm{stamp}$ [ms]')
     ay.set_ylabel('BPM Name')
     ay.grid(False)
@@ -419,37 +423,74 @@ def run_multiprocess_synchronous_get_optimized(pvs):
 # #########################################################
 # #################### Test EpicsOrbit ####################
 # #########################################################
-def run_test_epicsorbit_class():
+def run_test_epicsorbit_class(total_time=30):
     """Test EpicsOrbit class."""
     def callback(pvname, value, **kwargs):
-        if not pvname.endswith('OrbX-Mon'):
+        if not pvname.endswith('SlowOrbX-Mon'):
             return
-        nonlocal t0
+        nonlocal t0, orbits
         t1 = time.time()
-        # print(
-        #     f'dtime {(t1-t0)*1000:.1f} ms    '
-        #     f'len {len(value):d}   first {value[0]:.0f} nm    '
-        #     f'avg {np.mean(value):.0f} nm    std {np.std(value):.0f} nm')
-        print(
-            f'dtime {(t1-t0)*1000:.1f} ms    '
-            f'avg {(t1 - np.mean(value))*1000:.0f} ms    '
-            f'std {np.std(value)*1000:.0f} ms    '
-            f'p2p {(np.max(value)-np.min(value))*1000:.0f} ms    ')
+        value = t1 - np.asarray(value) * 1e3
+        orbits.append(value)
         t0 = t1
 
     orb = EpicsOrbit('SI')
 
     time.sleep(5)
     print('Setting orbit acquisition rate')
+    t0 = time.time()
+    orbits = []
+    orb.add_callback(callback)
+
     orb.set_orbit_mode(orb._csorb.SOFBMode.SlowOrb)
     orb.set_orbit_acq_rate(40)
 
-    t0 = time.time()
-
-    orb.add_callback(callback)
-
-    for i in range(60):
+    for i in range(total_time):
+        print(f'remaining time {total_time - i:5.1f} s', end='\r')
         time.sleep(1)
+    print('\nDone!')
+
+    save_pickle('epics_orbit', np.asarray(orbits))
+
+
+# #########################################################
+# ####################### Analysis ########################
+# #########################################################
+def run_test_epicsorbit_analysis():
+    """Run analysis for epicsorbit test."""
+    orbits = load_pickle('epics_orbit')*1000
+    orbits_avg = orbits.mean(axis=1)
+    orbits_std = orbits.std(axis=1)
+    orbits_p2p = orbits.max(axis=1) - orbits.min(axis=1)
+
+    fig = plt.figure(figsize=(10, 10))
+    gs = mgrid.GridSpec(3, 1, figure=fig)
+    gs.update(left=0.12, right=0.98, top=0.97, bottom=0.08, hspace=0.25)
+    ax = plt.subplot(gs[0, 0])
+    ay = plt.subplot(gs[1, 0])
+    az = plt.subplot(gs[2, 0])
+
+    colors = mcmap.jet(np.linspace(0, 1, orbits.shape[1]))
+    lines = ax.plot(orbits, 'o-')
+    ax.set_xlabel('aquisition number')
+    ax.set_ylabel(r'$\Delta t_\mathrm{stamp}$ [ms]')
+    for c, line in zip(colors, lines):
+        line.set_color(c)
+    ax.set_ylim([-5, 30])
+
+    ay.plot(orbits_avg, 'o-', label='AVG')
+    ay.plot(orbits_std, 'o-', label='STD')
+    ay.plot(orbits_p2p, 'o-', label='P2P')
+    ay.set_xlabel('acquisition number')
+    ay.set_ylabel(r'$t_\mathrm{stamp}$ [ms]')
+    ay.legend(loc='best')
+    ay.set_ylim([-5, 30])
+
+    az.hist(orbits.ravel(), bins=100, range=(0, 30))
+    az.set_xlabel(r'$t_\mathrm{stamp}$ [ms]')
+    az.set_ylabel('number of evts')
+
+    plt.show()
 
 
 # #########################################################
@@ -582,7 +623,7 @@ def run_camonitor_bpm_analysis(tstamp=None):
 
     bins += (bins[1]-bins[0])/2
     bins = bins[:-1]
-    lower = (bins > 25) & (bins < 34.5)
+    lower = (bins > 25) & (bins < 44)
     dens1 = dens[lower]
     bins1 = bins[lower]
     fitb1, coeff1 = fit_gauss(
@@ -596,7 +637,7 @@ def run_camonitor_bpm_analysis(tstamp=None):
         horizontalalignment='right',
         arrowprops=dict(facecolor='black', shrink=0.05))
 
-    upper = bins > 34.5
+    upper = bins > 44
     dens2 = dens[upper]
     bins2 = bins[upper]
     if dens2.max() > 4:
@@ -617,14 +658,14 @@ if __name__ == '__main__':
     sofb = SOFBFactory.create('SI')
     bpms = []
     bpms.extend(sofb.bpm_names)
-    # # bpms[:1]
+    # bpms[:1]
 
     # bpms = []
-    # sofb = SOFBFactory.create('TS')
-    # bpms.extend(sofb.bpm_names)
     # sofb = SOFBFactory.create('TB')
     # bpms.extend(sofb.bpm_names)
-    # bpms = bpms[:1]
+    # sofb = SOFBFactory.create('TS')
+    # bpms.extend(sofb.bpm_names)
+    # # bpms = bpms[:1]
 
     pvsraw = []
     for bpm in bpms:
@@ -649,10 +690,11 @@ if __name__ == '__main__':
     # run_multiprocess_asynchronous_get(pvs)
     # run_multiprocess_asynchronous_get_analysis()
 
-    # run_multiprocess_asynchronous_monitor(pvs, total_time=1)
+    # run_multiprocess_asynchronous_monitor(pvs, total_time=0.4)
     # run_multiprocess_asynchronous_monitor_analysis()
 
-    run_test_epicsorbit_class()
+    # run_test_epicsorbit_class(total_time=5)
+    # run_test_epicsorbit_analysis()
 
     # run_test_sofb()
     # run_test_sofb_analysis()
