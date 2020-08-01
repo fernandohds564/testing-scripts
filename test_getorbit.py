@@ -443,10 +443,10 @@ def run_test_epicsorbit_class(total_time=30):
     orb.add_callback(callback)
 
     orb.set_orbit_mode(orb._csorb.SOFBMode.SlowOrb)
-    orb.set_orbit_acq_rate(40)
+    orb.set_orbit_acq_rate(120)
 
     for i in range(total_time):
-        print(f'remaining time {total_time - i:5.1f} s', end='\r')
+        print(f'remaining time {total_time - i:5.1f} s')
         time.sleep(1)
     print('\nDone!')
 
@@ -476,7 +476,7 @@ def run_test_epicsorbit_analysis():
     ax.set_ylabel(r'$\Delta t_\mathrm{stamp}$ [ms]')
     for c, line in zip(colors, lines):
         line.set_color(c)
-    ax.set_ylim([-5, 30])
+    ax.set_ylim([-5, 60])
 
     ay.plot(orbits_avg, 'o-', label='AVG')
     ay.plot(orbits_std, 'o-', label='STD')
@@ -484,9 +484,9 @@ def run_test_epicsorbit_analysis():
     ay.set_xlabel('acquisition number')
     ay.set_ylabel(r'$t_\mathrm{stamp}$ [ms]')
     ay.legend(loc='best')
-    ay.set_ylim([-5, 30])
+    ay.set_ylim([-5, 60])
 
-    az.hist(orbits.ravel(), bins=100, range=(0, 30))
+    az.hist(orbits.ravel(), bins=100, range=(0, 60))
     az.set_xlabel(r'$t_\mathrm{stamp}$ [ms]')
     az.set_ylabel('number of evts')
 
@@ -693,8 +693,8 @@ if __name__ == '__main__':
     # run_multiprocess_asynchronous_monitor(pvs, total_time=0.4)
     # run_multiprocess_asynchronous_monitor_analysis()
 
-    # run_test_epicsorbit_class(total_time=5)
-    # run_test_epicsorbit_analysis()
+    # run_test_epicsorbit_class(total_time=360)
+    run_test_epicsorbit_analysis()
 
     # run_test_sofb()
     # run_test_sofb_analysis()
