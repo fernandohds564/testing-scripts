@@ -67,7 +67,7 @@ sig = np.array(sig)
 
 # #### Mix data
 np.random.seed(1029084)
-A = np.random.rand(sig.shape[0] + 1, sig.shape[0])
+A = np.random.rand(sig.shape[0], sig.shape[0])
 x = A @ sig
 # x += 0.1*np.random.randn(*x.shape)
 
